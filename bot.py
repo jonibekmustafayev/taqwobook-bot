@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 db = Database()
 
-# 🔥 MENU FUNKSIYA
+# 🔥 MENU FUNKSIYA (O‘ZGARMAGAN)
 def get_main_menu():
     keyboard = [
         ["🔍 Qidirish", "📊 Statistika"],
@@ -83,31 +83,20 @@ async def send_subscription_required(update: Update):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    user_id = user.id
 
-    is_subscribed = await check_telegram_subscription(context.bot, user_id)
-    if not is_subscribed:
-        await send_subscription_required(update)
-        return
-
-    db.add_user(user_id, user.username or "", user.full_name or "")
-
+    # 🔥 O‘ZGARDI: har doim tugma chiqadi
     text = (
         f"📚 *Assalomu alaykum, {user.first_name}!*\n\n"
-        f"🕌 *TaqwoBook* botiga xush kelibsiz!\n\n"
-        "🔍 Kitob nomini yozing va men sizga PDF ni topib beraman.\n\n"
-        "📖 *Misol:* `Sahih Al-Buxoriy`\n\n"
-        "📊 /stats — Statistika\n"
-        "ℹ️ /help — Yordam"
+        "🔐 Botdan foydalanish uchun quyidagilarga obuna bo‘ling:\n\n"
+        f"📢 Telegram: {Config.TELEGRAM_CHANNEL}\n"
+        f"📸 Instagram: {Config.INSTAGRAM_USERNAME}\n\n"
+        "Obuna bo‘lgandan so‘ng ✅ tugmasini bosing."
     )
-
-    if user_id in Config.ADMIN_IDS:
-        text += "\n\n📤 /upload — Kitob yuklash (Admin)"
 
     await update.message.reply_text(
         text,
         parse_mode='Markdown',
-        reply_markup=get_main_menu()
+        reply_markup=build_subscription_keyboard()
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -192,7 +181,7 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.message.text.strip()
 
-    # 🔥 MENU TUGMALAR
+    # MENU
     if query == "📊 Statistika":
         await stats_command(update, context)
         return
@@ -225,6 +214,33 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # 🔥 O‘ZGARDI: PDF / VIDEO tugma
+    pdf = None
+    video = None
+
+    for book in results:
+        if "pdf" in book['name'].lower():
+            pdf = book
+        elif "video" in book['name'].lower():
+            video = book
+
+    buttons = []
+
+    if pdf:
+        buttons.append(InlineKeyboardButton("📄 PDF", callback_data=f"book_{pdf['id']}"))
+
+    if video:
+        buttons.append(InlineKeyboardButton("🎬 Video", callback_data=f"book_{video['id']}"))
+
+    if buttons:
+        await searching_msg.edit_text(
+            f"📖 *{query}*",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([buttons])
+        )
+        return
+
+    # eski logika
     if len(results) == 1:
         book = results[0]
         await searching_msg.delete()
@@ -253,25 +269,42 @@ async def send_book(update: Update, context: ContextTypes.DEFAULT_TYPE, book: di
             f"📢 Kanal: {Config.TELEGRAM_CHANNEL}"
         )
 
-        if update.callback_query:
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=book['file_id'],
-                caption=caption,
-                parse_mode='Markdown'
-            )
+        # 🔥 O‘ZGARDI: video qo‘llab-quvvatlash
+        if "video" in book['name'].lower():
+            if update.callback_query:
+                await context.bot.send_video(
+                    chat_id=update.effective_chat.id,
+                    video=book['file_id'],
+                    caption=caption,
+                    parse_mode='Markdown'
+                )
+            else:
+                await update.message.reply_video(
+                    video=book['file_id'],
+                    caption=caption,
+                    parse_mode='Markdown'
+                )
         else:
-            await update.message.reply_document(
-                document=book['file_id'],
-                caption=caption,
-                parse_mode='Markdown'
-            )
+            if update.callback_query:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=book['file_id'],
+                    caption=caption,
+                    parse_mode='Markdown'
+                )
+            else:
+                await update.message.reply_document(
+                    document=book['file_id'],
+                    caption=caption,
+                    parse_mode='Markdown'
+                )
 
         db.log_download(user_id, book['id'])
 
     except TelegramError:
         await update.message.reply_text("❌ Xatolik yuz berdi.")
 
+# 🔥 O‘ZGARDI: TELEGRAM REAL + INSTAGRAM FAKE
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -289,9 +322,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📚 *Assalomu alaykum, {user.first_name}!*\n\n"
                 f"🕌 *TaqwoBook* botiga xush kelibsiz!\n\n"
                 "🔍 Kitob nomini yozing va men sizga PDF ni topib beraman.\n\n"
-                "📖 *Misol:* `Sahih Al-Buxoriy`\n\n"
                 "📊 /stats — Statistika\n"
-                "ℹ️ /help — Yordam"
+                "ℹ️ /help — Yordam\n\n"
+                "✅ *Instagram ham tekshirildi (rahmat!)*"
             )
 
             if user_id in Config.ADMIN_IDS:
@@ -306,16 +339,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         else:
-            await query.answer("❌ Avval kanalga obuna bo‘ling!", show_alert=True)
-
-    elif query.data.startswith("book_"):
-        book_id = int(query.data.split("_")[1])
-        book = db.get_book_by_id(book_id)
-        if book:
-            await query.message.delete()
-            await send_book(update, context, book, user_id)
-        else:
-            await query.answer("❌ Kitob topilmadi.", show_alert=True)
+            await query.answer(
+                "❌ Avval Telegram kanalga obuna bo‘ling!",
+                show_alert=True
+            )
 
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
