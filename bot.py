@@ -74,17 +74,17 @@ async def send_subscription_required(update: Update):
             reply_markup=build_subscription_keyboard()
         )
     else:
-        await update.message.reply_text(
+        await update.effective_chat.send_message(
             text, parse_mode='Markdown',
             reply_markup=build_subscription_keyboard()
         )
 
 # ─── HANDLERS ────────────────────────────────────────────────────────────────
 
+# 🔥 FIX: START HAR DOIM ISHLAYDI
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
-    # 🔥 O‘ZGARDI: har doim tugma chiqadi
     text = (
         f"📚 *Assalomu alaykum, {user.first_name}!*\n\n"
         "🔐 Botdan foydalanish uchun quyidagilarga obuna bo‘ling:\n\n"
@@ -93,7 +93,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Obuna bo‘lgandan so‘ng ✅ tugmasini bosing."
     )
 
-    await update.message.reply_text(
+    await update.effective_chat.send_message(
         text,
         parse_mode='Markdown',
         reply_markup=build_subscription_keyboard()
@@ -181,7 +181,6 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.message.text.strip()
 
-    # MENU
     if query == "📊 Statistika":
         await stats_command(update, context)
         return
@@ -208,13 +207,11 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not results:
         await searching_msg.edit_text(
-            f"❌ *{query}* topilmadi.\n\n"
-            "📌 Admin bilan bog'laning yoki boshqa nom bilan qidiring.",
+            f"❌ *{query}* topilmadi.",
             parse_mode='Markdown'
         )
         return
 
-    # 🔥 O‘ZGARDI: PDF / VIDEO tugma
     pdf = None
     video = None
 
@@ -225,10 +222,8 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
             video = book
 
     buttons = []
-
     if pdf:
         buttons.append(InlineKeyboardButton("📄 PDF", callback_data=f"book_{pdf['id']}"))
-
     if video:
         buttons.append(InlineKeyboardButton("🎬 Video", callback_data=f"book_{video['id']}"))
 
@@ -240,109 +235,49 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # eski logika
-    if len(results) == 1:
-        book = results[0]
-        await searching_msg.delete()
-        await send_book(update, context, book, user_id)
-    else:
-        keyboard = []
-        for book in results[:10]:
-            keyboard.append([
-                InlineKeyboardButton(
-                    f"📖 {book['name']}",
-                    callback_data=f"book_{book['id']}"
-                )
-            ])
-
-        await searching_msg.edit_text(
-            f"📚 *{len(results)} ta kitob topildi:*",
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+    await send_book(update, context, results[0], user_id)
 
 async def send_book(update: Update, context: ContextTypes.DEFAULT_TYPE, book: dict, user_id: int):
     try:
-        caption = (
-            f"📖 *{book['name']}*\n\n"
-            f"🕌 @TaqwobookBot dan yuklab oldingiz!\n"
-            f"📢 Kanal: {Config.TELEGRAM_CHANNEL}"
-        )
-
-        # 🔥 O‘ZGARDI: video qo‘llab-quvvatlash
         if "video" in book['name'].lower():
-            if update.callback_query:
-                await context.bot.send_video(
-                    chat_id=update.effective_chat.id,
-                    video=book['file_id'],
-                    caption=caption,
-                    parse_mode='Markdown'
-                )
-            else:
-                await update.message.reply_video(
-                    video=book['file_id'],
-                    caption=caption,
-                    parse_mode='Markdown'
-                )
+            await context.bot.send_video(update.effective_chat.id, book['file_id'])
         else:
-            if update.callback_query:
-                await context.bot.send_document(
-                    chat_id=update.effective_chat.id,
-                    document=book['file_id'],
-                    caption=caption,
-                    parse_mode='Markdown'
-                )
-            else:
-                await update.message.reply_document(
-                    document=book['file_id'],
-                    caption=caption,
-                    parse_mode='Markdown'
-                )
+            await context.bot.send_document(update.effective_chat.id, book['file_id'])
 
         db.log_download(user_id, book['id'])
 
     except TelegramError:
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        await update.effective_chat.send_message("❌ Xatolik yuz berdi.")
 
-# 🔥 O‘ZGARDI: TELEGRAM REAL + INSTAGRAM FAKE
+# 🔥 FIX QILINGAN BUTTON HANDLER
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    user = update.effective_user
-    user_id = user.id
+    user_id = update.effective_user.id
 
     if query.data == "check_subscription":
-        is_subscribed = await check_telegram_subscription(context.bot, user_id)
+        if await check_telegram_subscription(context.bot, user_id):
 
-        if is_subscribed:
-            db.add_user(user_id, user.username or "", user.full_name or "")
-
-            text = (
-                f"📚 *Assalomu alaykum, {user.first_name}!*\n\n"
-                f"🕌 *TaqwoBook* botiga xush kelibsiz!\n\n"
-                "🔍 Kitob nomini yozing va men sizga PDF ni topib beraman.\n\n"
-                "📊 /stats — Statistika\n"
-                "ℹ️ /help — Yordam\n\n"
-                "✅ *Instagram ham tekshirildi (rahmat!)*"
-            )
-
-            if user_id in Config.ADMIN_IDS:
-                text += "\n\n📤 /upload — Kitob yuklash (Admin)"
-
-            await query.message.edit_text(text, parse_mode='Markdown')
+            await query.message.edit_text("✅ Rahmat! Botga xush kelibsiz")
 
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text="👇 Menu orqali foydalaning",
                 reply_markup=get_main_menu()
             )
-
         else:
-            await query.answer(
-                "❌ Avval Telegram kanalga obuna bo‘ling!",
-                show_alert=True
-            )
+            await query.answer("❌ Avval kanalga kiring", show_alert=True)
+
+    elif query.data.startswith("book_"):
+        book_id = int(query.data.split("_")[1])
+        book = db.get_book_by_id(book_id)
+
+        if book:
+            await query.message.delete()
+            await send_book(update, context, book, user_id)
+        else:
+            await query.answer("❌ Kitob topilmadi.", show_alert=True)
 
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
@@ -364,13 +299,8 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_book))
 
-    logger.info("Bot ishga tushdi! 24/7 ishlaydi...")
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,
-        poll_interval=0.5,
-        timeout=10
-    )
+    logger.info("Bot ishga tushdi!")
+    app.run_polling()
 
 if __name__ == '__main__':
     main()
