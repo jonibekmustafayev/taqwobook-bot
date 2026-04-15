@@ -1,7 +1,7 @@
 import logging
 import os
 import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, filters
@@ -18,10 +18,17 @@ logger = logging.getLogger(__name__)
 
 db = Database()
 
+# 🔥 MENU FUNKSIYA
+def get_main_menu():
+    keyboard = [
+        ["🔍 Qidirish", "📊 Statistika"],
+        ["ℹ️ Yordam"]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 # ─── SUBSCRIPTION CHECK ───────────────────────────────────────────────────────
 
 async def check_telegram_subscription(bot, user_id: int) -> bool:
-    """Foydalanuvchi Telegram kanalga obuna bo'lganligini tekshiradi."""
     try:
         member = await bot.get_chat_member(
             chat_id=Config.TELEGRAM_CHANNEL,
@@ -32,7 +39,6 @@ async def check_telegram_subscription(bot, user_id: int) -> bool:
         return False
 
 def build_subscription_keyboard() -> InlineKeyboardMarkup:
-    """Obuna tugmalarini yaratadi."""
     keyboard = [
         [
             InlineKeyboardButton(
@@ -56,7 +62,6 @@ def build_subscription_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 async def send_subscription_required(update: Update):
-    """Obuna talab xabarini yuboradi."""
     text = (
         "🔐 *Botdan foydalanish uchun obuna bo'ling!*\n\n"
         f"📢 Telegram: {Config.TELEGRAM_CHANNEL}\n"
@@ -77,17 +82,14 @@ async def send_subscription_required(update: Update):
 # ─── HANDLERS ────────────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Bot boshlanishi."""
     user = update.effective_user
     user_id = user.id
 
-    # Obunani tekshir
     is_subscribed = await check_telegram_subscription(context.bot, user_id)
     if not is_subscribed:
         await send_subscription_required(update)
         return
 
-    # Foydalanuvchini bazaga qo'sh
     db.add_user(user_id, user.username or "", user.full_name or "")
 
     text = (
@@ -98,10 +100,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 /stats — Statistika\n"
         "ℹ️ /help — Yordam"
     )
-    await update.message.reply_text(text, parse_mode='Markdown')
+
+    if user_id in Config.ADMIN_IDS:
+        text += "\n\n📤 /upload — Kitob yuklash (Admin)"
+
+    await update.message.reply_text(
+        text,
+        parse_mode='Markdown',
+        reply_markup=get_main_menu()
+    )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Yordam buyrug'i."""
     user_id = update.effective_user.id
     is_subscribed = await check_telegram_subscription(context.bot, user_id)
     if not is_subscribed:
@@ -119,7 +128,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode='Markdown')
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Statistika buyrug'i."""
     user_id = update.effective_user.id
     is_subscribed = await check_telegram_subscription(context.bot, user_id)
     if not is_subscribed:
@@ -136,7 +144,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode='Markdown')
 
 async def upload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin kitob yuklash buyrug'i."""
     user_id = update.effective_user.id
     if user_id not in Config.ADMIN_IDS:
         await update.message.reply_text("❌ Bu buyruq faqat adminlar uchun.")
@@ -150,7 +157,6 @@ async def upload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_pdf_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin PDF yuklashini qayta ishlaydi."""
     user_id = update.effective_user.id
     if user_id not in Config.ADMIN_IDS:
         return
@@ -159,7 +165,6 @@ async def handle_pdf_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not document or document.mime_type != 'application/pdf':
         return
 
-    # Kitob nomini caption yoki fayl nomidan olish
     book_name = update.message.caption or document.file_name
     if book_name.endswith('.pdf'):
         book_name = book_name[:-4]
@@ -167,7 +172,6 @@ async def handle_pdf_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_id = document.file_id
     file_size = document.file_size
 
-    # Bazaga saqlash
     db.add_book(book_name, file_id, file_size)
 
     await update.message.reply_text(
@@ -176,33 +180,41 @@ async def handle_pdf_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📦 Hajm: {file_size // 1024} KB",
         parse_mode='Markdown'
     )
-    logger.info(f"Admin {user_id} added book: {book_name}")
 
 async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Kitob qidirish — asosiy funksiya."""
     user_id = update.effective_user.id
     user = update.effective_user
 
-    # Obunani tekshir
     is_subscribed = await check_telegram_subscription(context.bot, user_id)
     if not is_subscribed:
         await send_subscription_required(update)
         return
 
     query = update.message.text.strip()
+
+    # 🔥 MENU TUGMALAR
+    if query == "📊 Statistika":
+        await stats_command(update, context)
+        return
+
+    if query == "ℹ️ Yordam":
+        await help_command(update, context)
+        return
+
+    if query == "🔍 Qidirish":
+        await update.message.reply_text("🔍 Kitob nomini yozing...")
+        return
+
     if not query:
         return
 
-    # Foydalanuvchini bazaga qo'sh
     db.add_user(user_id, user.username or "", user.full_name or "")
 
-    # "Qidirmoqda..." xabari (tezlik uchun)
     searching_msg = await update.message.reply_text(
         f"🔍 *{query}* qidirilmoqda...",
         parse_mode='Markdown'
     )
 
-    # Kitobni bazadan qidirish
     results = db.search_books(query)
 
     if not results:
@@ -214,14 +226,12 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if len(results) == 1:
-        # Bitta natija — bevosita yuborish
         book = results[0]
         await searching_msg.delete()
         await send_book(update, context, book, user_id)
     else:
-        # Bir nechta natija — tanlash
         keyboard = []
-        for book in results[:10]:  # max 10 ta
+        for book in results[:10]:
             keyboard.append([
                 InlineKeyboardButton(
                     f"📖 {book['name']}",
@@ -236,7 +246,6 @@ async def search_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def send_book(update: Update, context: ContextTypes.DEFAULT_TYPE, book: dict, user_id: int):
-    """Kitob PDF ni yuboradi."""
     try:
         caption = (
             f"📖 *{book['name']}*\n\n"
@@ -258,40 +267,46 @@ async def send_book(update: Update, context: ContextTypes.DEFAULT_TYPE, book: di
                 parse_mode='Markdown'
             )
 
-        # Yuklanishni bazaga yozish
         db.log_download(user_id, book['id'])
-        logger.info(f"Book '{book['name']}' sent to user {user_id}")
 
-    except TelegramError as e:
-        logger.error(f"Error sending book: {e}")
-        error_text = "❌ Kitob yuborishda xatolik yuz berdi. Qayta urinib ko'ring."
-        if update.callback_query:
-            await update.callback_query.message.reply_text(error_text)
-        else:
-            await update.message.reply_text(error_text)
+    except TelegramError:
+        await update.message.reply_text("❌ Xatolik yuz berdi.")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Inline tugma bosishlarni qayta ishlaydi."""
     query = update.callback_query
     await query.answer()
 
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = user.id
 
     if query.data == "check_subscription":
         is_subscribed = await check_telegram_subscription(context.bot, user_id)
+
         if is_subscribed:
-            user = update.effective_user
             db.add_user(user_id, user.username or "", user.full_name or "")
-            await query.message.edit_text(
-                f"✅ *Rahmat, {user.first_name}!*\n\n"
-                "📚 Endi kitob nomini yozing va men topib beraman!",
-                parse_mode='Markdown'
+
+            text = (
+                f"📚 *Assalomu alaykum, {user.first_name}!*\n\n"
+                f"🕌 *TaqwoBook* botiga xush kelibsiz!\n\n"
+                "🔍 Kitob nomini yozing va men sizga PDF ni topib beraman.\n\n"
+                "📖 *Misol:* `Sahih Al-Buxoriy`\n\n"
+                "📊 /stats — Statistika\n"
+                "ℹ️ /help — Yordam"
             )
+
+            if user_id in Config.ADMIN_IDS:
+                text += "\n\n📤 /upload — Kitob yuklash (Admin)"
+
+            await query.message.edit_text(text, parse_mode='Markdown')
+
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="👇 Menu orqali foydalaning",
+                reply_markup=get_main_menu()
+            )
+
         else:
-            await query.answer(
-                "❌ Hali obuna bo'lmadingiz! Iltimos obuna bo'ling.",
-                show_alert=True
-            )
+            await query.answer("❌ Avval kanalga obuna bo‘ling!", show_alert=True)
 
     elif query.data.startswith("book_"):
         book_id = int(query.data.split("_")[1])
@@ -305,7 +320,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
 def main():
-    """Botni ishga tushiradi."""
     logger.info("TaqwoBook Bot ishga tushmoqda...")
 
     app = (
@@ -315,7 +329,6 @@ def main():
         .build()
     )
 
-    # Handlerlarni ro'yxatdan o'tkazish
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("stats", stats_command))
@@ -324,12 +337,11 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_book))
 
-    # Botni ishga tushirish (polling)
     logger.info("Bot ishga tushdi! 24/7 ishlaydi...")
     app.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
-        poll_interval=0.5,      # Tezlik uchun
+        poll_interval=0.5,
         timeout=10
     )
 
